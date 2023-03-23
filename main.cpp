@@ -18,6 +18,8 @@
 #include "cert.h"
 #include <HTTPClient.h>
 #include <HTTPUpdate.h>
+#include <WiFiClientSecure.h>
+#include <PubSubClient.h>
 
 #include <TaskScheduler.h>
 
@@ -41,7 +43,7 @@ ModbusMaster node;
 void t1CallgetMeter();
 void t2CallsendViaNBIOT();
 void t2CallsendViaNBIOT_Notification();
-void t4Restart();
+
 //TASK
 Task t1(250000, TASK_FOREVER, &t1CallgetMeter);
 Task t2(300000, TASK_FOREVER, &t2CallsendViaNBIOT);
@@ -62,6 +64,9 @@ String FirmwareVer = "0.1";
 #define URL_fw_Version "https://raw.githubusercontent.com/greenioiot/MEA_HTTPOTA_DTM_Node/main/bin_version.txt"
 
 #define URL_fw_Bin "https://raw.githubusercontent.com/greenioiot/MEA_HTTPOTA_DTM_Node/main/firmware.bin"
+
+WiFiClientSecure wifiClient;
+PubSubClient client(wifiClient);
 
 StaticJsonDocument<400> doc;
 
@@ -230,6 +235,7 @@ void OTA_git_CALL()
     firmwareUpdate();
   }
 }
+
 
 void HeartBeat() {
   //   Sink current to drain charge from watchdog circuit
@@ -525,10 +531,10 @@ void setup()
 
   HeartBeat();
   HOSTNAME.concat(getMacAddress());
-  SerialBT.begin(HOSTNAME); //Bluetooth
 
-  SerialBT.begin(HOSTNAME); //Bluetooth device name
-  SerialBT.println(HOSTNAME);
+  // SerialBT.begin(HOSTNAME); //Bluetooth
+  // SerialBT.println(HOSTNAME);
+
   AISnb.debug = true;
   AISnb.setupDevice(serverPort);
   HeartBeat();
