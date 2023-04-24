@@ -59,7 +59,7 @@ String _IP = "";
 String dataJson = "";
 boolean validEpoc = false;
 
-String FirmwareVer = "0.3";
+String FirmwareVer = "0.4";
 
 #define URL_fw_Version "https://raw.githubusercontent.com/greenioiot/MEA_HTTPOTA_DTM_Node/main/bin_version.txt"
 
@@ -356,7 +356,7 @@ void _init() {
 /**********************************************  WIFI Client 注意编译时要设置此值 *********************************
    wifi client
 */
-const char* ssid = "greenio"; //replace "xxxxxx" with your WIFI's ssid
+const char* ssid = "greenioGuest"; //replace "xxxxxx" with your WIFI's ssid
 const char* password = "green7650"; //replace "xxxxxx" with your WIFI's password
 
 //WiFi&OTA 参数
@@ -825,13 +825,20 @@ void t2CallsendViaNBIOT ()
   json.concat(",\"C_C\":");
   json.concat(meter.cC);
 
-  json.concat(",\"V_A\":");
+  json.concat(",\"VAn\":");
   json.concat(meter.vAN);
-  json.concat(",\"V_B\":");
+  json.concat(",\"VBn\":");
   json.concat(meter.vBN);
-  json.concat(",\"V_C\":");
+  json.concat(",\"VCn\":");
   json.concat(meter.vCN);
-
+  
+  json.concat(",\"VAB\":");
+  json.concat(meter.vAB);
+  json.concat(",\"VBC\":");
+  json.concat(meter.vBC);
+  json.concat(",\"VCA\":");
+  json.concat(meter.vCA);
+  
   json.concat(",\"P_A\":");
   json.concat(meter.apA);
   json.concat(",\"P_B\":");
