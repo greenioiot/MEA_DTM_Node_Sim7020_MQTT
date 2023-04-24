@@ -1,3 +1,5 @@
+#include <Arduino.h>
+
 #include "BluetoothSerial.h"
 
 #if !defined(CONFIG_BT_ENABLED) || !defined(CONFIG_BLUEDROID_ENABLED)
@@ -12,6 +14,12 @@
 #include <HardwareSerial.h>
 #include "HardwareSerial_NB_BC95.h"
 
+#include <Update.h>
+#include "cert.h"
+#include <HTTPClient.h>
+#include <HTTPUpdate.h>
+#include <WiFiClientSecure.h>
+#include <PubSubClient.h>
 
 #include <TaskScheduler.h>
 
@@ -22,11 +30,9 @@ HardwareSerial_NB_BC95 AISnb;
 
 BluetoothSerial SerialBT;
 
-
 #include <ArduinoOTA.h>
 #include <WiFi.h>
 #include <Wire.h>
-
 
 String deviceToken = "xx";
 String serverIP = "103.27.203.83"; // Your Server IP;
@@ -37,7 +43,7 @@ ModbusMaster node;
 void t1CallgetMeter();
 void t2CallsendViaNBIOT();
 void t2CallsendViaNBIOT_Notification();
-void t4Restart();
+
 //TASK
 Task t1(250000, TASK_FOREVER, &t1CallgetMeter);
 Task t2(300000, TASK_FOREVER, &t2CallsendViaNBIOT);
@@ -52,6 +58,15 @@ unsigned long _epoch = 0;
 String _IP = "";
 String dataJson = "";
 boolean validEpoc = false;
+
+String FirmwareVer = "0.1";
+
+#define URL_fw_Version "https://raw.githubusercontent.com/greenioiot/MEA_HTTPOTA_DTM_Node/main/bin_version.txt"
+
+#define URL_fw_Bin "https://raw.githubusercontent.com/greenioiot/MEA_HTTPOTA_DTM_Node/main/firmware.bin"
+
+WiFiClientSecure wifiClient;
+PubSubClient client(wifiClient);
 
 StaticJsonDocument<400> doc;
 
@@ -120,6 +135,157 @@ Signal meta;
 
 unsigned long ms;
 
+char  char_to_byte(char c)
+{
+  if ((c >= '0') && (c <= '9'))
+  {
+    return (c - 0x30);
+  }
+  if ((c >= 'A') && (c <= 'F'))
+  {
+    return (c - 55);
+  }
+}
+
+void firmwareUpdate();
+
+int FirmwareVersionCheck(void)
+{
+  String payload;
+  int httpCode;
+  String fwurl = "";
+  fwurl += URL_fw_Version;
+  fwurl += "?";
+  fwurl += String(rand());
+  Serial.println(fwurl);
+  WiFiClientSecure *client = new WiFiClientSecure;
+
+  if (client)
+  {
+    client->setCACert(rootCACertificate);
+
+    // Add a scoping block for HTTPClient https to make sure it is destroyed before WiFiClientSecure *client is
+    HTTPClient https;
+
+    if (https.begin(*client, fwurl))
+    { // HTTPS
+      Serial.print("[HTTPS] GET...\n");
+      // start connection and send HTTP header
+      delay(100);
+      httpCode = https.GET();
+      delay(100);
+      if (httpCode == HTTP_CODE_OK) // if version received
+      {
+        payload = https.getString(); // save received version
+      }
+      else
+      {
+        Serial.print("error in downloading version file:");
+        Serial.println(httpCode);
+      }
+      https.end();
+    }
+    delete client;
+  }
+
+  if (httpCode == HTTP_CODE_OK) // if version received
+  {
+    payload.trim();
+    if (payload.equals(FirmwareVer))
+    {
+      Serial.printf("\nDevice already on latest firmware version:%s\n", FirmwareVer);
+      return 0;
+    }
+    else
+    {
+      Serial.println(payload);
+      Serial.println("New firmware detected");
+      return 1;
+    }
+  }
+  return 0;
+}
+
+void firmwareUpdate(void)
+{
+  WiFiClientSecure client;
+  client.setCACert(rootCACertificate);
+  t_httpUpdate_return ret = httpUpdate.update(client, URL_fw_Bin);
+
+  switch (ret)
+  {
+  case HTTP_UPDATE_FAILED:
+    Serial.printf("HTTP_UPDATE_FAILD Error (%d): %s\n", httpUpdate.getLastError(), httpUpdate.getLastErrorString().c_str());
+    break;
+
+  case HTTP_UPDATE_NO_UPDATES:
+    Serial.println("HTTP_UPDATE_NO_UPDATES");
+    break;
+
+  case HTTP_UPDATE_OK:
+    Serial.println("HTTP_UPDATE_OK");
+    break;
+  }
+}
+
+void OTA_git_CALL()
+{
+  if (FirmwareVersionCheck())
+  {
+    firmwareUpdate();
+  }
+}
+
+
+void HeartBeat() {
+  //   Sink current to drain charge from watchdog circuit
+  pinMode(trigWDTPin, OUTPUT);
+  digitalWrite(trigWDTPin, LOW);
+
+  // Led monitor for Heartbeat
+  digitalWrite(ledHeartPIN, LOW);
+  delay(300);
+  digitalWrite(ledHeartPIN, HIGH);
+
+  // Return to high-Z
+  pinMode(trigWDTPin, INPUT);
+
+  Serial.println("Heartbeat");
+  SerialBT.println("Heartbeat");
+}
+
+void writeString(char add, String data)
+{
+  EEPROM.begin(512);
+  int _size = data.length();
+  int i;
+  for (i = 0; i < _size; i++)
+  {
+    EEPROM.write(add + i, data[i]);
+  }
+  EEPROM.write(add + _size, '\0'); //Add termination null character for String Data
+  EEPROM.commit();
+}
+
+String read_String(char add)
+{
+  int i;
+  char data[100]; //Max 100 Bytes
+  int len = 0;
+  unsigned char k;
+  k = EEPROM.read(add);
+  while (k != '\0' && len < 500) //Read until null character
+  {
+    k = EEPROM.read(add + len);
+    data[len] = k;
+    len++;
+  }
+  data[len] = '\0';
+  Serial.print("Debug:");
+  Serial.println(String(data));
+  return String(data);
+}
+
 void _writeEEPROM(String data) {
   Serial.print("Writing Data:");
   Serial.println(data);
@@ -135,18 +301,6 @@ void _loadConfig() {
   Serial.println(serverIP);
 }
 
-
-char  char_to_byte(char c)
-{
-  if ((c >= '0') && (c <= '9'))
-  {
-    return (c - 0x30);
-  }
-  if ((c >= 'A') && (c <= 'F'))
-  {
-    return (c - 55);
-  }
-}
 void _init() {
 
   Serial.println(_config);
@@ -199,41 +353,6 @@ void _init() {
 
 }
 
-
-void writeString(char add, String data)
-{
-  EEPROM.begin(512);
-  int _size = data.length();
-  int i;
-  for (i = 0; i < _size; i++)
-  {
-    EEPROM.write(add + i, data[i]);
-  }
-  EEPROM.write(add + _size, '\0'); //Add termination null character for String Data
-  EEPROM.commit();
-}
-
-
-String read_String(char add)
-{
-  int i;
-  char data[100]; //Max 100 Bytes
-  int len = 0;
-  unsigned char k;
-  k = EEPROM.read(add);
-  while (k != '\0' && len < 500) //Read until null character
-  {
-    k = EEPROM.read(add + len);
-    data[len] = k;
-    len++;
-  }
-  data[len] = '\0';
-  Serial.print("Debug:");
-  Serial.println(String(data));
-  return String(data);
-}
-
-
 /**********************************************  WIFI Client 注意编译时要设置此值 *********************************
    wifi client
 */
@@ -243,7 +362,6 @@ const char* password = "green7650"; //replace "xxxxxx" with your WIFI's password
 //WiFi&OTA 参数
 String HOSTNAME = "MEA-";
 #define PASSWORD "green7650" //the password for OTA upgrade, can set it in any char you want
-
 
 void setupOTA()
 {
@@ -385,27 +503,9 @@ String getMacAddress() {
   return String(baseMacChr);
 }
 
-
 //********************************************************************//
 //*********************** HeartBeat Function **************************//
 //********************************************************************//
-void HeartBeat() {
-  //   Sink current to drain charge from watchdog circuit
-  pinMode(trigWDTPin, OUTPUT);
-  digitalWrite(trigWDTPin, LOW);
-
-  // Led monitor for Heartbeat
-  digitalWrite(ledHeartPIN, LOW);
-  delay(300);
-  digitalWrite(ledHeartPIN, HIGH);
-
-  // Return to high-Z
-  pinMode(trigWDTPin, INPUT);
-
-  Serial.println("Heartbeat");
-  SerialBT.println("Heartbeat");
-}
-
 
 void setup()
 {
@@ -431,11 +531,10 @@ void setup()
 
   HeartBeat();
   HOSTNAME.concat(getMacAddress());
-  SerialBT.begin(HOSTNAME); //Bluetooth
 
+  // SerialBT.begin(HOSTNAME); //Bluetooth
+  // SerialBT.println(HOSTNAME);
 
-  SerialBT.begin(HOSTNAME); //Bluetooth device name
-  SerialBT.println(HOSTNAME);
   AISnb.debug = true;
   AISnb.setupDevice(serverPort);
   HeartBeat();
@@ -453,150 +552,150 @@ void setup()
   HeartBeat();
   setupOTA();
 
+  OTA_git_CALL();
   HeartBeat();
 }
 
-void t2CallsendViaNBIOT ()
-{
-  meta = AISnb.getSignal();
+String decToHex(int decValue) {
 
-  Serial.print("RSSI:"); Serial.println(meta.rssi);
-
-  json = "";
-  json.concat("{\"Tn\":\"");
-  json.concat(deviceToken);
-  json.concat("\",\"C_A\":");
-  json.concat(meter.cA);
-  json.concat(",\"C_B\":");
-  json.concat(meter.cB);
-  json.concat(",\"C_C\":");
-  json.concat(meter.cC);
-
-  json.concat(",\"V_A\":");
-  json.concat(meter.vAN);
-  json.concat(",\"V_B\":");
-  json.concat(meter.vBN);
-  json.concat(",\"V_C\":");
-  json.concat(meter.vCN);
-
-  json.concat(",\"P_A\":");
-  json.concat(meter.apA);
-  json.concat(",\"P_B\":");
-  json.concat(meter.apB);
-  json.concat(",\"P_C\":");
-  json.concat(meter.apC);
-  json.concat(",\"P_TOT\":");
-  json.concat(meter.apT);
-  json.concat(",\"Q_A\":");
-  json.concat(meter.rpA);
-  json.concat(",\"Q_B\":");
-  json.concat(meter.rpB);
-  json.concat(",\"Q_C\":");
-  json.concat(meter.rpC);
-  json.concat(",\"Q_TOT\":");
-  json.concat(meter.rpT);
-  json.concat(",\"S_A\":");
-  json.concat(meter.appA);
-  json.concat(",\"S_B\":");
-  json.concat(meter.appB);
-  json.concat(",\"S_C\":");
-  json.concat(meter.appC);
-  json.concat(",\"S_TOT\":");
-  json.concat(meter.appT);
-
-  
-  json.concat(",\"PF\":");
-  json.concat(meter.pf);
-  json.concat(",\"KWH_A\":");
-  json.concat(meter.poA);
-  json.concat(",\"KWH_B\":");
-  json.concat(meter.poB);
-  json.concat(",\"KWH_C\":");
-  json.concat(meter.poC);
-  json.concat(",\"KWH_T\":");
-  if(meter.poT.equals("nan")){
-      meter.poT= "0";
-   }
-  json.concat(meter.poT);
-
-  json.concat(",\"F\":");
-  json.concat(meter.freq);
-  json.concat(",\"apTotal\":");
-  json.concat(meter.apTotal);
-  json.concat(",\"TEMP_AMB\":");
-  json.concat(meter.Temp1);
-  json.concat(",\"TEMP_OIL\":");
-  json.concat(meter.Temp2);
-
-
-  json.concat(",\"rssi\":");
-  json.concat(meta.rssi);
-  json.concat("}");
-  Serial.println(json);
-  SerialBT.println(json);
-  //
-  UDPSend udp = AISnb.sendUDPmsgStr(serverIP, serverPort, json);
-  //  UDPReceive resp = AISnb.waitResponse();
-  Serial.print("rssi:");
-  Serial.println(meta.rssi);
-  //  SerialBT.print("rssi:");
-  //  SerialBT.println(meta.rssi);
-  Serial.print("serverIP:");
-  Serial.println(serverIP);
+  String hexString = String(decValue, HEX);
+  return hexString;
 }
 
-void t2CallsendViaNBIOT_Notification ()
+unsigned int hexToDec(String hexString) {
+
+  unsigned int decValue = 0;
+  int nextInt;
+
+  for (int i = 0; i < hexString.length(); i++) {
+
+    nextInt = int(hexString.charAt(i));
+    if (nextInt >= 48 && nextInt <= 57) nextInt = map(nextInt, 48, 57, 0, 9);
+    if (nextInt >= 65 && nextInt <= 70) nextInt = map(nextInt, 65, 70, 10, 15);
+    if (nextInt >= 97 && nextInt <= 102) nextInt = map(nextInt, 97, 102, 10, 15);
+    nextInt = constrain(nextInt, 0, 15);
+
+    decValue = (decValue * 16) + nextInt;
+  }
+
+  return decValue;
+}
+
+float HexTofloat(uint32_t x)
 {
-  meta = AISnb.getSignal();
+  return (*(float*)&x);
+}
 
-  Serial.print("RSSI:"); Serial.println(meta.rssi);
+float read_Modbus(uint16_t  REG)
+{
+  static uint32_t i;
+  uint8_t j, result;
+  uint16_t data[2];
+  uint32_t value = 0;
+  float val = 0.0;
 
-  json = "";
-  json.concat("{\"Tn\":\"");
-  json.concat(deviceToken);
-  /////
-  json.concat("\",\"cuA\":");
-  json.concat(meter.cuA);
-  json.concat(",\"cuB\":");
-  json.concat(meter.cuB);
-  json.concat(",\"cuC\":");
-  json.concat(meter.cuC);
-  json.concat(",\"cuW\":");
-  json.concat(meter.cuW);
+  // communicate with Modbus slave ID 1 over Serial (port 2)
+  node.begin(ID_PowerMeter, modbus);
 
-  json.concat(",\"vuAB\":");
-  json.concat(meter.vuAB);
-  json.concat(",\"vuBC\":");
-  json.concat(meter.vuBC);
-  json.concat(",\"vuCA\":");
-  json.concat(meter.vuCA);
-  json.concat(",\"vuLLW\":");
-  json.concat(meter.vuLLW);
+  // slave: read (6) 16-bit registers starting at register 2 to RX buffer
+  result = node.readHoldingRegisters(REG, 2);
 
-  json.concat(",\"vuAN\":");
-  json.concat(meter.vuAN);
-  json.concat(",\"vuBN\":");
-  json.concat(meter.vuBN);
-  json.concat(",\"vuCN\":");
-  json.concat(meter.vuCN);
-  json.concat(",\"vuLNW\":");
-  json.concat(meter.vuLNW);
+  // do something with data if read is successful
+  if (result == node.ku8MBSuccess)
+  {
+    for (j = 0; j < 2; j++)
+    {
+      data[j] = node.getResponseBuffer(j);
+//      SerialBT.print(REG); SerialBT.print(":"); SerialBT.print(j); SerialBT.print(":");  SerialBT.println(data[j]);
+//      Serial.print(REG); Serial.print(":"); Serial.print(j); Serial.print(":");  Serial.println(data[j]);
+
+    }
+    value = data[0];
+    value = value << 16;
+    value = value + data[1];
+ 
+    val = HexTofloat(value);
+
+    return val;
+  } else {
+    Serial.print("Connec modbus fail. REG >>> "); Serial.println(REG, HEX); // Debug
+    //    delay(1000);
+    return 0;
+  }
+}
+
+int read_Modbus_PF(uint16_t  REG)
+{
+  static uint32_t i;
+  uint8_t j, result;
+  uint16_t data[2];
+  uint32_t value = 0;
+  float val = 0.0;
+
+  // communicate with Modbus slave ID 1 over Serial (port 2)
+  node.begin(ID_PowerMeter, modbus);
+
+  // slave: read (6) 16-bit registers starting at register 2 to RX buffer
+  result = node.readHoldingRegisters(REG, 2);
+
+  // do something with data if read is successful
+  if (result == node.ku8MBSuccess)
+  {
+    for (j = 0; j < 2; j++)
+    {
+      data[j] = node.getResponseBuffer(j);
+//      SerialBT.print(REG); SerialBT.print(":"); SerialBT.print(j); SerialBT.print(":");  SerialBT.println(data[j]);
+//      Serial.print(REG); Serial.print(":"); Serial.print(j); Serial.print(":");  Serial.println(data[j]);
+
+    }
+    value = data[0];
+    value = value << 16;
+    value = value + data[1];
+    Serial.print("value:");
+//      Serial.println(value);
+    val = HexTofloat(value);
+
+    return val;
+  } else {
+    Serial.print("Connec modbus fail. REG >>> "); Serial.println(REG, HEX); // Debug
+    //    delay(1000);
+    return 0;
+  }
+} 
+
+int read_Modbus_1Byte(char addr, uint16_t  REG)
+{
+  static uint32_t i;
+  uint8_t j, result;
+  uint16_t data[2];
+  int32_t value = 0;
+  float val = 0.0;
+
+  // communicate with Modbus slave ID 1 over Serial (port 2)
+  node.begin(addr, modbus);
+
+  // slave: read (6) 16-bit registers starting at register 2 to RX buffer
+  result = node.readHoldingRegisters(REG, 2);
+
+  // do something with data if read is successful
+  if (result == node.ku8MBSuccess)
+  {
+    for (j = 0; j < 2; j++)
+    {
+      data[j] = node.getResponseBuffer(j);
+      SerialBT.print(REG); SerialBT.print(":"); SerialBT.print(j); SerialBT.print(":");  SerialBT.println(data[j]);
+      Serial.print(REG); Serial.print(":"); Serial.print(j); Serial.print(":");  Serial.println(data[j]);
 
 
-  json.concat(",\"rssi\":");
-  json.concat(meta.rssi);
-  json.concat(",\"csq\":");
-  json.concat(meta.csq);
-  json.concat("}");
-  Serial.println(json);
-  SerialBT.println(json);
-  //
-  UDPSend udp = AISnb.sendUDPmsgStr(serverIP, serverPort, json);
-  UDPReceive resp = AISnb.waitResponse();
-  Serial.print("rssi:");
-  Serial.println(meta.rssi);
-  SerialBT.print("rssi:");
-  SerialBT.println(meta.rssi);
+    }
+    value = data[0];
+
+    return value;
+  } else {
+    Serial.print("Connec modbus fail. REG >>> "); Serial.println(REG, HEX); // Debug
+    //    delay(1000);
+    return 0;
+  }
 }
 
 void readMeter()
@@ -710,75 +809,157 @@ void t1CallgetMeter() {     // Update read all data
   readMeter();
 }
 
-float HexTofloat(uint32_t x)
+void t2CallsendViaNBIOT ()
 {
+  meta = AISnb.getSignal();
 
-  return (*(float*)&x);
+  Serial.print("RSSI:"); Serial.println(meta.rssi);
+
+  json = "";
+  json.concat("{\"Tn\":\"");
+  json.concat(deviceToken);
+  json.concat("\",\"C_A\":");
+  json.concat(meter.cA);
+  json.concat(",\"C_B\":");
+  json.concat(meter.cB);
+  json.concat(",\"C_C\":");
+  json.concat(meter.cC);
+
+  json.concat(",\"VAn\":");
+  json.concat(meter.vAN);
+  json.concat(",\"VBn\":");
+  json.concat(meter.vBN);
+  json.concat(",\"VCn\":");
+  json.concat(meter.vCN);
+  
+  json.concat(",\"VAB\":");
+  json.concat(meter.vAB);
+  json.concat(",\"VBC\":");
+  json.concat(meter.vBC);
+  json.concat(",\"VCA\":");
+  json.concat(meter.vCA);
+  
+  json.concat(",\"P_A\":");
+  json.concat(meter.apA);
+  json.concat(",\"P_B\":");
+  json.concat(meter.apB);
+  json.concat(",\"P_C\":");
+  json.concat(meter.apC);
+  json.concat(",\"P_TOT\":");
+  json.concat(meter.apT);
+  json.concat(",\"Q_A\":");
+  json.concat(meter.rpA);
+  json.concat(",\"Q_B\":");
+  json.concat(meter.rpB);
+  json.concat(",\"Q_C\":");
+  json.concat(meter.rpC);
+  json.concat(",\"Q_TOT\":");
+  json.concat(meter.rpT);
+  json.concat(",\"S_A\":");
+  json.concat(meter.appA);
+  json.concat(",\"S_B\":");
+  json.concat(meter.appB);
+  json.concat(",\"S_C\":");
+  json.concat(meter.appC);
+  json.concat(",\"S_TOT\":");
+  json.concat(meter.appT);
+
+  
+  json.concat(",\"PF\":");
+  json.concat(meter.pf);
+  json.concat(",\"KWH_A\":");
+  json.concat(meter.poA);
+  json.concat(",\"KWH_B\":");
+  json.concat(meter.poB);
+  json.concat(",\"KWH_C\":");
+  json.concat(meter.poC);
+  json.concat(",\"KWH_T\":");
+  if(meter.poT.equals("nan")){
+      meter.poT= "0";
+   }
+  json.concat(meter.poT);
+
+  json.concat(",\"F\":");
+  json.concat(meter.freq);
+  json.concat(",\"apTotal\":");
+  json.concat(meter.apTotal);
+  json.concat(",\"TEMP_AMB\":");
+  json.concat(meter.Temp1);
+  json.concat(",\"TEMP_OIL\":");
+  json.concat(meter.Temp2);
+
+  json.concat(",\"ver\":");
+  json.concat(FirmwareVer);
+  json.concat(",\"rssi\":");
+  json.concat(meta.rssi);
+  json.concat("}");
+  Serial.println(json);
+  SerialBT.println(json);
+  //
+  UDPSend udp = AISnb.sendUDPmsgStr(serverIP, serverPort, json);
+  //  UDPReceive resp = AISnb.waitResponse();
+  Serial.print("rssi:");
+  Serial.println(meta.rssi);
+  //  SerialBT.print("rssi:");
+  //  SerialBT.println(meta.rssi);
+  Serial.print("serverIP:");
+  Serial.println(serverIP);
 }
 
-
-float read_Modbus(uint16_t  REG)
+void t2CallsendViaNBIOT_Notification ()
 {
-  static uint32_t i;
-  uint8_t j, result;
-  uint16_t data[2];
-  uint32_t value = 0;
-  float val = 0.0;
+  meta = AISnb.getSignal();
 
-  // communicate with Modbus slave ID 1 over Serial (port 2)
-  node.begin(ID_PowerMeter, modbus);
+  Serial.print("RSSI:"); Serial.println(meta.rssi);
 
-  // slave: read (6) 16-bit registers starting at register 2 to RX buffer
-  result = node.readHoldingRegisters(REG, 2);
+  json = "";
+  json.concat("{\"Tn\":\"");
+  json.concat(deviceToken);
+  /////
+  json.concat("\",\"cuA\":");
+  json.concat(meter.cuA);
+  json.concat(",\"cuB\":");
+  json.concat(meter.cuB);
+  json.concat(",\"cuC\":");
+  json.concat(meter.cuC);
+  json.concat(",\"cuW\":");
+  json.concat(meter.cuW);
 
-  // do something with data if read is successful
-  if (result == node.ku8MBSuccess)
-  {
-    for (j = 0; j < 2; j++)
-    {
-      data[j] = node.getResponseBuffer(j);
-//      SerialBT.print(REG); SerialBT.print(":"); SerialBT.print(j); SerialBT.print(":");  SerialBT.println(data[j]);
-//      Serial.print(REG); Serial.print(":"); Serial.print(j); Serial.print(":");  Serial.println(data[j]);
+  json.concat(",\"vuAB\":");
+  json.concat(meter.vuAB);
+  json.concat(",\"vuBC\":");
+  json.concat(meter.vuBC);
+  json.concat(",\"vuCA\":");
+  json.concat(meter.vuCA);
+  json.concat(",\"vuLLW\":");
+  json.concat(meter.vuLLW);
 
-    }
-    value = data[0];
-    value = value << 16;
-    value = value + data[1];
- 
-    val = HexTofloat(value);
+  json.concat(",\"vuAN\":");
+  json.concat(meter.vuAN);
+  json.concat(",\"vuBN\":");
+  json.concat(meter.vuBN);
+  json.concat(",\"vuCN\":");
+  json.concat(meter.vuCN);
+  json.concat(",\"vuLNW\":");
+  json.concat(meter.vuLNW);
 
 
-    return val;
-  } else {
-    Serial.print("Connec modbus fail. REG >>> "); Serial.println(REG, HEX); // Debug
-    //    delay(1000);
-    return 0;
-  }
+  json.concat(",\"rssi\":");
+  json.concat(meta.rssi);
+  json.concat(",\"csq\":");
+  json.concat(meta.csq);
+  json.concat("}");
+  Serial.println(json);
+  SerialBT.println(json);
+  //
+  UDPSend udp = AISnb.sendUDPmsgStr(serverIP, serverPort, json);
+  UDPReceive resp = AISnb.waitResponse();
+  Serial.print("rssi:");
+  Serial.println(meta.rssi);
+  SerialBT.print("rssi:");
+  SerialBT.println(meta.rssi);
 }
-String decToHex(int decValue) {
 
-  String hexString = String(decValue, HEX);
-  return hexString;
-}
-
-unsigned int hexToDec(String hexString) {
-
-  unsigned int decValue = 0;
-  int nextInt;
-
-  for (int i = 0; i < hexString.length(); i++) {
-
-    nextInt = int(hexString.charAt(i));
-    if (nextInt >= 48 && nextInt <= 57) nextInt = map(nextInt, 48, 57, 0, 9);
-    if (nextInt >= 65 && nextInt <= 70) nextInt = map(nextInt, 65, 70, 10, 15);
-    if (nextInt >= 97 && nextInt <= 102) nextInt = map(nextInt, 97, 102, 10, 15);
-    nextInt = constrain(nextInt, 0, 15);
-
-    decValue = (decValue * 16) + nextInt;
-  }
-
-  return decValue;
-}
 int getResult( unsigned int x_high, unsigned int x_low)
 {
   String hex2 = "";
@@ -789,93 +970,14 @@ int getResult( unsigned int x_high, unsigned int x_low)
   return hexToDec(hex2);
 }
 
-int read_Modbus_PF(uint16_t  REG)
-{
-  static uint32_t i;
-  uint8_t j, result;
-  uint16_t data[2];
-  uint32_t value = 0;
-  float val = 0.0;
-
-  // communicate with Modbus slave ID 1 over Serial (port 2)
-  node.begin(ID_PowerMeter, modbus);
-
-  // slave: read (6) 16-bit registers starting at register 2 to RX buffer
-  result = node.readHoldingRegisters(REG, 2);
-
-  // do something with data if read is successful
-  if (result == node.ku8MBSuccess)
-  {
-    for (j = 0; j < 2; j++)
-    {
-      data[j] = node.getResponseBuffer(j);
-//      SerialBT.print(REG); SerialBT.print(":"); SerialBT.print(j); SerialBT.print(":");  SerialBT.println(data[j]);
-//      Serial.print(REG); Serial.print(":"); Serial.print(j); Serial.print(":");  Serial.println(data[j]);
-
-    }
-    value = data[0];
-    value = value << 16;
-    value = value + data[1];
-    Serial.print("value:");
-//      Serial.println(value);
-    val = HexTofloat(value);
-
-    return val;
-  } else {
-    Serial.print("Connec modbus fail. REG >>> "); Serial.println(REG, HEX); // Debug
-    //    delay(1000);
-    return 0;
-  }
-} 
-
-
-int read_Modbus_1Byte(char addr, uint16_t  REG)
-{
-  static uint32_t i;
-  uint8_t j, result;
-  uint16_t data[2];
-  int32_t value = 0;
-  float val = 0.0;
-
-  // communicate with Modbus slave ID 1 over Serial (port 2)
-  node.begin(addr, modbus);
-
-  // slave: read (6) 16-bit registers starting at register 2 to RX buffer
-  result = node.readHoldingRegisters(REG, 2);
-
-  // do something with data if read is successful
-  if (result == node.ku8MBSuccess)
-  {
-    for (j = 0; j < 2; j++)
-    {
-      data[j] = node.getResponseBuffer(j);
-      SerialBT.print(REG); SerialBT.print(":"); SerialBT.print(j); SerialBT.print(":");  SerialBT.println(data[j]);
-      Serial.print(REG); Serial.print(":"); Serial.print(j); Serial.print(":");  Serial.println(data[j]);
-
-
-    }
-    value = data[0];
-
-    return value;
-  } else {
-    Serial.print("Connec modbus fail. REG >>> "); Serial.println(REG, HEX); // Debug
-    //    delay(1000);
-    return 0;
-  }
-}
-
 void loop()
 {
   runner.execute();
-
-
   ArduinoOTA.handle();
   ms = millis();
 
-
   if (ms % 600000 == 0)
   {
-
     Serial.println("Attach WiFi for，OTA "); Serial.println(WiFi.RSSI() );
     SerialBT.println("Attach WiFi for OTA"); SerialBT.println(WiFi.RSSI() );
     setupWIFI();
@@ -885,18 +987,16 @@ void loop()
 
   if (ms % 60000 == 0)
   {
-
+    OTA_git_CALL();
     Serial.println("Waiting for，OTA now"); Serial.println(WiFi.RSSI() );
     SerialBT.println("Waiting for, OTA now"); SerialBT.println(WiFi.RSSI() );
   }
+ 
   if (ms % 10000 == 0)
   {
     HeartBeat();
-
   }
-
 }
-
 
 /****************************************************
    [通用函数]ESP32 WiFi Kit 32事件处理
