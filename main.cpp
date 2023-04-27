@@ -59,7 +59,7 @@ String _IP = "";
 String dataJson = "";
 boolean validEpoc = false;
 
-String FirmwareVer = "0.4";
+String FirmwareVer = "0.5";
 
 #define URL_fw_Version "https://raw.githubusercontent.com/greenioiot/MEA_HTTPOTA_DTM_Node/main/bin_version.txt"
 
@@ -356,7 +356,7 @@ void _init() {
 /**********************************************  WIFI Client 注意编译时要设置此值 *********************************
    wifi client
 */
-const char* ssid = "greenioGuest"; //replace "xxxxxx" with your WIFI's ssid
+const char* ssid = "greenio"; //replace "xxxxxx" with your WIFI's ssid
 const char* password = "green7650"; //replace "xxxxxx" with your WIFI's password
 
 //WiFi&OTA 参数
@@ -763,7 +763,7 @@ HeartBeat();
 
 HeartBeat();
   meter.Temp1 = read_Modbus_1Byte(ID_Temp1, pvTemp)/10;
-  meter.Temp2 = read_Modbus_1Byte(ID_Temp2, pvTemp)/10;
+  // meter.Temp2 = read_Modbus_1Byte(ID_Temp2, pvTemp)/10;
 
   Serial.print("Current A: ");  Serial.print(meter.cA);  Serial.println(" Amp");
   Serial.print("Current B: ");  Serial.print(meter.cB);  Serial.println(" Amp");
@@ -794,7 +794,7 @@ HeartBeat();
   Serial.print("Active Power Total: ");  Serial.print(read_Modbus(ap_Total));  Serial.println(" Kw");
 
   Serial.print("Temp1: ");  Serial.print(meter.Temp1);  Serial.println(" c");
-  Serial.print("Temp2: ");  Serial.print(meter.Temp2);  Serial.println(" c");
+  // Serial.print("Temp2: ");  Serial.print(meter.Temp2);  Serial.println(" c");
   Serial.println("__________________________________________________________________");
   Serial.print("Volt UnbalanceAB:"); Serial.println(meter.vuAB);
   Serial.print("Volt UnbalanceBC:"); Serial.println(meter.vuBC);
@@ -885,8 +885,8 @@ void t2CallsendViaNBIOT ()
   json.concat(meter.apTotal);
   json.concat(",\"TEMP_AMB\":");
   json.concat(meter.Temp1);
-  json.concat(",\"TEMP_OIL\":");
-  json.concat(meter.Temp2);
+  // json.concat(",\"TEMP_OIL\":");
+  // json.concat(meter.Temp2);
 
   json.concat(",\"ver\":");
   json.concat(FirmwareVer);
