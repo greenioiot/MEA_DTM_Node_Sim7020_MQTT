@@ -33,7 +33,12 @@ BluetoothSerial SerialBT;
 #include <ArduinoOTA.h>
 #include <WiFi.h>
 #include <Wire.h>
+#include <esp_task_wdt.h>
+//3 seconds WDT
+#define WDT_TIMEOUT 600
 
+int i = 0;
+int last = millis();
 String deviceToken = "xx";
 String serverIP = "147.50.151.130"; // Your Server IP;
 String serverPort = "19956"; // Your Server Port;
@@ -56,7 +61,7 @@ String _IP = "";
 String dataJson = "";
 boolean validEpoc = false;
 
-String FirmwareVer = "0.5";
+String FirmwareVer = "0.6";
 
 #define URL_fw_Version "https://raw.githubusercontent.com/greenioiot/MEA_HTTPOTA_DTM_Node/main/bin_version.txt"
 
@@ -547,6 +552,9 @@ void setup()
     modbus.begin(9600, SERIAL_8N1, 16, 17);
 //  modbus.begin(9600, SERIAL_8N1, 25, 26); // for testing
 
+
+  esp_task_wdt_init(WDT_TIMEOUT, true); //enable panic so ESP32 restarts
+  esp_task_wdt_add(NULL); //add current thread to WDT watch
 }
 
 String decToHex(int decValue) {
@@ -938,7 +946,7 @@ void loop()
     t1CallgetMeter();
     t2CallsendViaNBIOT();
   }
-  if (ms % 70000 == 0)
+  if (ms % 600000 == 0)
   {
     Serial.println("Attach WiFi for，OTA "); Serial.println(WiFi.RSSI() );
     SerialBT.println("Attach WiFi for OTA"); SerialBT.println(WiFi.RSSI() );
@@ -958,6 +966,20 @@ void loop()
   {
     //    HeartBeat();
   }
+
+
+  if (ms - last >= 600000 && i < 5) {
+    Serial.println("Resetting WDT...");
+    esp_task_wdt_reset();
+    last = millis();
+    i++;
+    Serial.print("wdt count i:"); Serial.print(i); Serial.print("last:"); Serial.println(last);
+    if (i > 5) {
+      Serial.println("Stopping WDT reset. CPU should reboot in 60s");
+    }
+  } 
+
+
 }
 
 /****************************************************
