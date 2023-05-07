@@ -35,24 +35,21 @@ BluetoothSerial SerialBT;
 #include <Wire.h>
 
 String deviceToken = "xx";
-String serverIP = "103.27.203.83"; // Your Server IP;
+String serverIP = "147.50.151.130"; // Your Server IP;
 String serverPort = "19956"; // Your Server Port;
 String json = "";
 
 ModbusMaster node;
 void t1CallgetMeter();
 void t2CallsendViaNBIOT();
-void t2CallsendViaNBIOT_Notification();
 
-//TASK
-Task t1(250000, TASK_FOREVER, &t1CallgetMeter);
-Task t2(300000, TASK_FOREVER, &t2CallsendViaNBIOT);
-//Task t3(60000, TASK_FOREVER, &t2CallsendViaNBIOT_Notification);
+
+
 
 #define trigWDTPin    32
 #define ledHeartPIN   0
 
-Scheduler runner;
+//Scheduler runner;
 String _config = "{\"_type\":\"retrattr\",\"Tn\":\"8966031940014308310\",\"keys\":[\"epoch\",\"ip\"]}";
 unsigned long _epoch = 0;
 String _IP = "";
@@ -122,7 +119,7 @@ struct Meter
   String pfB; //
   String pfC; //
   String pfT; //
-  String pf; // Power Factor alter format 
+  String pf; // Power Factor alter format
   String poA; //   Energy
   String poB; //   Energy
   String poC; //   Energy
@@ -214,17 +211,17 @@ void firmwareUpdate(void)
 
   switch (ret)
   {
-  case HTTP_UPDATE_FAILED:
-    Serial.printf("HTTP_UPDATE_FAILD Error (%d): %s\n", httpUpdate.getLastError(), httpUpdate.getLastErrorString().c_str());
-    break;
+    case HTTP_UPDATE_FAILED:
+      Serial.printf("HTTP_UPDATE_FAILD Error (%d): %s\n", httpUpdate.getLastError(), httpUpdate.getLastErrorString().c_str());
+      break;
 
-  case HTTP_UPDATE_NO_UPDATES:
-    Serial.println("HTTP_UPDATE_NO_UPDATES");
-    break;
+    case HTTP_UPDATE_NO_UPDATES:
+      Serial.println("HTTP_UPDATE_NO_UPDATES");
+      break;
 
-  case HTTP_UPDATE_OK:
-    Serial.println("HTTP_UPDATE_OK");
-    break;
+    case HTTP_UPDATE_OK:
+      Serial.println("HTTP_UPDATE_OK");
+      break;
   }
 }
 
@@ -244,7 +241,7 @@ void HeartBeat() {
 
   // Led monitor for Heartbeat
   digitalWrite(ledHeartPIN, LOW);
-  delay(300);
+  delay(100);
   digitalWrite(ledHeartPIN, HIGH);
 
   // Return to high-Z
@@ -302,53 +299,59 @@ void _loadConfig() {
 }
 
 void _init() {
-
+  AISnb.debug = true;
+  AISnb.setupDevice(serverPort);
   Serial.println(_config);
-
-  do {
-    UDPSend udp = AISnb.sendUDPmsgStr(serverIP, serverPort, _config);
-    dataJson = "";
-    deviceToken = AISnb.getNCCID();
-    Serial.print("nccid:");
-    Serial.println(deviceToken);
+  AISnb.debug = true;
 
 
-    UDPReceive resp = AISnb.waitResponse();
-    AISnb.receive_UDP(resp);
-    Serial.print("waitData:");
-    Serial.println(resp.data);
+  deviceToken = AISnb.getNCCID();
+  delay(5000);
+  String ip1 = AISnb.getDeviceIP();
+  //  do {
+  UDPSend udp = AISnb.sendUDPmsgStr(serverIP, serverPort, _config);
+  dataJson = "";
+  deviceToken = AISnb.getNCCID();
+  Serial.print("nccid:");
+  Serial.println(deviceToken);
 
 
-    for (int x = 0; x < resp.data.length(); x += 2)
-    {
-      char c =  char_to_byte(resp.data[x]) << 4 | char_to_byte(resp.data[x + 1]);
+  UDPReceive resp = AISnb.waitResponse();
+  AISnb.receive_UDP(resp);
+  Serial.print("waitData:");
+  Serial.println(resp.data);
 
-      dataJson += c;
-    }
+
+  for (int x = 0; x < resp.data.length(); x += 2)
+  {
+    char c =  char_to_byte(resp.data[x]) << 4 | char_to_byte(resp.data[x + 1]);
+
+    dataJson += c;
+  }
+  Serial.println(dataJson);
+  DeserializationError error = deserializeJson(doc, dataJson);
+
+  // Test if parsing succeeds.
+  if (error) {
+    Serial.print(F("deserializeJson() failed: "));
+    Serial.println(error.f_str());
+    validEpoc = true;
+    delay(4000);
+  } else {
+    validEpoc = false;
+    unsigned long epoch = doc["epoch"];
+    _epoch = epoch;
+    String ip = doc["ip"];
+    _IP = ip;
     Serial.println(dataJson);
-    DeserializationError error = deserializeJson(doc, dataJson);
+    Serial.print("epoch:");  Serial.println(_epoch);
+    _writeEEPROM(_IP);
+    Serial.println(_IP);
 
-    // Test if parsing succeeds.
-    if (error) {
-      Serial.print(F("deserializeJson() failed: "));
-      Serial.println(error.f_str());
-      validEpoc = true;
-      delay(4000);
-    } else {
-      validEpoc = false;
-      unsigned long epoch = doc["epoch"];
-      _epoch = epoch;
-      String ip = doc["ip"];
-      _IP = ip;
-      Serial.println(dataJson);
-      Serial.print("epoch:");  Serial.println(_epoch);
-      _writeEEPROM(_IP);
-      Serial.println(_IP);
-
-    }
-    delay(5000);
-    HeartBeat();
-  } while (validEpoc);
+  }
+  delay(5000);
+  HeartBeat();
+  //  } while (validEpoc);
 
 
 }
@@ -512,35 +515,20 @@ void setup()
   HeartBeat();
   Serial.begin(115200);
 
-  modbus.begin(9600, SERIAL_8N1, 16, 17);
 
-  runner.init();
-  Serial.println("Initialized scheduler");
 
-  runner.addTask(t1);
-  Serial.println("added t1");
-  runner.addTask(t2);
-  Serial.println("added t2");
-  //  runner.addTask(t3);
-  //  Serial.println("added t3");
-  HeartBeat();
-  delay(2000);
-  t1.enable();  Serial.println("Enabled t1");
-  t2.enable();  Serial.println("Enabled t2");
-  //  t3.enable();  Serial.println("Enabled t3");
+
 
   HeartBeat();
   HOSTNAME.concat(getMacAddress());
 
-  // SerialBT.begin(HOSTNAME); //Bluetooth
-  // SerialBT.println(HOSTNAME);
 
-  AISnb.debug = true;
-  AISnb.setupDevice(serverPort);
+
+
   HeartBeat();
-  _init();
-  HeartBeat();
-  _loadConfig();
+
+
+  //  _loadConfig();
 
   Serial.println();
   Serial.println(F("***********************************"));
@@ -554,6 +542,11 @@ void setup()
 
   OTA_git_CALL();
   HeartBeat();
+
+  _init();
+    modbus.begin(9600, SERIAL_8N1, 16, 17);
+//  modbus.begin(9600, SERIAL_8N1, 25, 26); // for testing
+
 }
 
 String decToHex(int decValue) {
@@ -593,9 +586,8 @@ float read_Modbus(uint16_t  REG)
   uint16_t data[2];
   uint32_t value = 0;
   float val = 0.0;
-
-  // communicate with Modbus slave ID 1 over Serial (port 2)
   node.begin(ID_PowerMeter, modbus);
+  // communicate with Modbus slave ID 1 over Serial (port 2)
 
   // slave: read (6) 16-bit registers starting at register 2 to RX buffer
   result = node.readHoldingRegisters(REG, 2);
@@ -606,14 +598,14 @@ float read_Modbus(uint16_t  REG)
     for (j = 0; j < 2; j++)
     {
       data[j] = node.getResponseBuffer(j);
-//      SerialBT.print(REG); SerialBT.print(":"); SerialBT.print(j); SerialBT.print(":");  SerialBT.println(data[j]);
-//      Serial.print(REG); Serial.print(":"); Serial.print(j); Serial.print(":");  Serial.println(data[j]);
+      //      SerialBT.print(REG); SerialBT.print(":"); SerialBT.print(j); SerialBT.print(":");  SerialBT.println(data[j]);
+      Serial.print(REG); Serial.print(":"); Serial.print(j); Serial.print(":");  Serial.println(data[j]);
 
     }
     value = data[0];
     value = value << 16;
     value = value + data[1];
- 
+
     val = HexTofloat(value);
 
     return val;
@@ -644,15 +636,15 @@ int read_Modbus_PF(uint16_t  REG)
     for (j = 0; j < 2; j++)
     {
       data[j] = node.getResponseBuffer(j);
-//      SerialBT.print(REG); SerialBT.print(":"); SerialBT.print(j); SerialBT.print(":");  SerialBT.println(data[j]);
-//      Serial.print(REG); Serial.print(":"); Serial.print(j); Serial.print(":");  Serial.println(data[j]);
+      //      SerialBT.print(REG); SerialBT.print(":"); SerialBT.print(j); SerialBT.print(":");  SerialBT.println(data[j]);
+      Serial.print(REG); Serial.print(":"); Serial.print(j); Serial.print(":");  Serial.println(data[j]);
 
     }
     value = data[0];
     value = value << 16;
     value = value + data[1];
     Serial.print("value:");
-//      Serial.println(value);
+    //      Serial.println(value);
     val = HexTofloat(value);
 
     return val;
@@ -661,7 +653,7 @@ int read_Modbus_PF(uint16_t  REG)
     //    delay(1000);
     return 0;
   }
-} 
+}
 
 int read_Modbus_1Byte(char addr, uint16_t  REG)
 {
@@ -704,9 +696,9 @@ void readMeter()
   meter.cB = read_Modbus(c_B);
   meter.cC = read_Modbus(c_C);
   meter.cN = read_Modbus(c_N);
-//  meter.cG = read_Modbus(c_G);
+  meter.cG = read_Modbus(c_G);
   meter.cAvg = read_Modbus(c_Avg);
-HeartBeat();
+
   meter.vAB = read_Modbus(v_A_B);
   meter.vBC = read_Modbus(v_B_C);
   meter.vCA = read_Modbus(v_C_A);
@@ -715,9 +707,8 @@ HeartBeat();
   meter.vBN = read_Modbus(v_B_N);
   meter.vCN = read_Modbus(v_C_N);
   meter.vLNAvg = read_Modbus(v_LN_Avg);
-  meter.apTotal = read_Modbus(ap_Total);
   meter.freq = read_Modbus(v_Freq);
-HeartBeat();
+
   //
   meter.cuA = read_Modbus(cu_A);  // Current Unbalance A
   meter.cuB = read_Modbus(cu_B);  // Current Unbalance B
@@ -728,7 +719,7 @@ HeartBeat();
   meter.vuBC = read_Modbus(vu_BC);
   meter.vuCA = read_Modbus(vu_CA);
   meter.vuLLW = read_Modbus(vu_LLW); // Voltage Unbalance L-L Worst
-HeartBeat();
+  HeartBeat();
   meter.vuAN = read_Modbus(vu_AN);
   meter.vuBN = read_Modbus(vu_BN);
   meter.vuCN = read_Modbus(vu_CN);
@@ -741,35 +732,33 @@ HeartBeat();
   meter.rpA = read_Modbus(rp_A);
   meter.rpB = read_Modbus(rp_B);
   meter.rpC = read_Modbus(rp_C);
-HeartBeat();  
+
   meter.rpT = read_Modbus(rp_T); // Reactive Power Total
   meter.appA = read_Modbus(app_A);
   meter.appB = read_Modbus(app_B);
   meter.appC = read_Modbus(app_C);
   meter.appT = read_Modbus(app_T); // Apparent Power Total
-HeartBeat();
- 
+
   meter.pfA = read_Modbus_PF(PF_A); // Power Factor
   meter.pfB = read_Modbus_PF(PF_B); // Power Factor
   meter.pfC = read_Modbus_PF(PF_C); // Power Factor
   meter.pfT = read_Modbus_PF(PF_T); //  Power Factor Total
   meter.pf = read_Modbus(PF);
-HeartBeat();
 
-  meter.poA = read_Modbus(KWH_A); // Energy   
+
+  meter.poA = read_Modbus(KWH_A); // Energy
   meter.poB = read_Modbus(KWH_B); // Energy
   meter.poC = read_Modbus(KWH_C); // Energy
   meter.poT = read_Modbus(KWH_T); //  Energy
 
-HeartBeat();
-  meter.Temp1 = read_Modbus_1Byte(ID_Temp1, pvTemp)/10;
-  // meter.Temp2 = read_Modbus_1Byte(ID_Temp2, pvTemp)/10;
+  meter.Temp1 = read_Modbus_1Byte(ID_Temp1, pvTemp) / 10;
+  //  meter.Temp2 = read_Modbus_1Byte(ID_Temp2, pvTemp) / 10;
 
   Serial.print("Current A: ");  Serial.print(meter.cA);  Serial.println(" Amp");
   Serial.print("Current B: ");  Serial.print(meter.cB);  Serial.println(" Amp");
   Serial.print("Current C: ");  Serial.print(meter.cC);  Serial.println(" Amp");
   Serial.print("Current N: ");  Serial.print(meter.cN);  Serial.println(" Amp");
-//  Serial.print("Current G: ");  Serial.print(meter.cG);  Serial.println(" Amp");
+  //  Serial.print("Current G: ");  Serial.print(meter.cG);  Serial.println(" Amp");
   Serial.print("Current Avg: ");  Serial.print(meter.cAvg);  Serial.println(" Amp");
   Serial.print("Voltage A-B: ");  Serial.print(meter.vAB);  Serial.println(" Volt");
   Serial.print("Voltage B-C: ");  Serial.print(meter.vBC);  Serial.println(" Volt");
@@ -791,10 +780,10 @@ HeartBeat();
 
   Serial.print("Frequency: ");  Serial.print(read_Modbus(v_Freq));  Serial.println(" Hz");
 
-  Serial.print("Active Power Total: ");  Serial.print(read_Modbus(ap_Total));  Serial.println(" Kw");
+  Serial.print("Active Power Total: ");  Serial.print(read_Modbus(ap_T));  Serial.println(" Kw");
 
   Serial.print("Temp1: ");  Serial.print(meter.Temp1);  Serial.println(" c");
-  // Serial.print("Temp2: ");  Serial.print(meter.Temp2);  Serial.println(" c");
+  Serial.print("Temp2: ");  Serial.print(meter.Temp2);  Serial.println(" c");
   Serial.println("__________________________________________________________________");
   Serial.print("Volt UnbalanceAB:"); Serial.println(meter.vuAB);
   Serial.print("Volt UnbalanceBC:"); Serial.println(meter.vuBC);
@@ -818,11 +807,11 @@ void t2CallsendViaNBIOT ()
   json = "";
   json.concat("{\"Tn\":\"");
   json.concat(deviceToken);
-  json.concat("\",\"C_A\":");
+  json.concat("\",\"CA\":");
   json.concat(meter.cA);
-  json.concat(",\"C_B\":");
+  json.concat(",\"CB\":");
   json.concat(meter.cB);
-  json.concat(",\"C_C\":");
+  json.concat(",\"CC\":");
   json.concat(meter.cC);
 
   json.concat(",\"VAn\":");
@@ -831,92 +820,55 @@ void t2CallsendViaNBIOT ()
   json.concat(meter.vBN);
   json.concat(",\"VCn\":");
   json.concat(meter.vCN);
-  
+
   json.concat(",\"VAB\":");
   json.concat(meter.vAB);
   json.concat(",\"VBC\":");
   json.concat(meter.vBC);
   json.concat(",\"VCA\":");
   json.concat(meter.vCA);
-  
-  json.concat(",\"P_A\":");
+
+  json.concat(",\"aPA\":");
   json.concat(meter.apA);
-  json.concat(",\"P_B\":");
+  json.concat(",\"aPB\":");
   json.concat(meter.apB);
-  json.concat(",\"P_C\":");
+  json.concat(",\"aPC\":");
   json.concat(meter.apC);
-  json.concat(",\"P_TOT\":");
+  json.concat(",\"aPT\":");
   json.concat(meter.apT);
-  json.concat(",\"Q_A\":");
+  json.concat(",\"rpA\":");
   json.concat(meter.rpA);
-  json.concat(",\"Q_B\":");
+  json.concat(",\"rpB\":");
   json.concat(meter.rpB);
-  json.concat(",\"Q_C\":");
+  json.concat(",\"rpC\":");
   json.concat(meter.rpC);
-  json.concat(",\"Q_TOT\":");
+  json.concat(",\"rpT\":");
   json.concat(meter.rpT);
-  json.concat(",\"S_A\":");
+  json.concat(",\"appA\":");
   json.concat(meter.appA);
-  json.concat(",\"S_B\":");
+  json.concat(",\"appB\":");
   json.concat(meter.appB);
-  json.concat(",\"S_C\":");
+  json.concat(",\"appC\":");
   json.concat(meter.appC);
-  json.concat(",\"S_TOT\":");
+  json.concat(",\"appT\":");
   json.concat(meter.appT);
 
-  
+
   json.concat(",\"PF\":");
   json.concat(meter.pf);
-  json.concat(",\"KWH_A\":");
+  json.concat(",\"poA\":");
   json.concat(meter.poA);
-  json.concat(",\"KWH_B\":");
+  json.concat(",\"poB\":");
   json.concat(meter.poB);
-  json.concat(",\"KWH_C\":");
+  json.concat(",\"poC\":");
   json.concat(meter.poC);
-  json.concat(",\"KWH_T\":");
-  if(meter.poT.equals("nan")){
-      meter.poT= "0";
-   }
+  json.concat(",\"poT\":");
+  if (meter.poT.equals("nan")) {
+    meter.poT = "0";
+  }
   json.concat(meter.poT);
 
-  json.concat(",\"F\":");
-  json.concat(meter.freq);
-  json.concat(",\"apTotal\":");
-  json.concat(meter.apTotal);
-  json.concat(",\"TEMP_AMB\":");
-  json.concat(meter.Temp1);
-  // json.concat(",\"TEMP_OIL\":");
-  // json.concat(meter.Temp2);
-
-  json.concat(",\"ver\":");
-  json.concat(FirmwareVer);
-  json.concat(",\"rssi\":");
-  json.concat(meta.rssi);
-  json.concat("}");
-  Serial.println(json);
-  SerialBT.println(json);
-  //
-  UDPSend udp = AISnb.sendUDPmsgStr(serverIP, serverPort, json);
-  //  UDPReceive resp = AISnb.waitResponse();
-  Serial.print("rssi:");
-  Serial.println(meta.rssi);
-  //  SerialBT.print("rssi:");
-  //  SerialBT.println(meta.rssi);
-  Serial.print("serverIP:");
-  Serial.println(serverIP);
-}
-
-void t2CallsendViaNBIOT_Notification ()
-{
-  meta = AISnb.getSignal();
-
-  Serial.print("RSSI:"); Serial.println(meta.rssi);
-
-  json = "";
-  json.concat("{\"Tn\":\"");
-  json.concat(deviceToken);
-  /////
-  json.concat("\",\"cuA\":");
+  json.concat(",\"cuA\":");
   json.concat(meter.cuA);
   json.concat(",\"cuB\":");
   json.concat(meter.cuB);
@@ -932,7 +884,7 @@ void t2CallsendViaNBIOT_Notification ()
   json.concat(",\"vuCA\":");
   json.concat(meter.vuCA);
   json.concat(",\"vuLLW\":");
-  json.concat(meter.vuLLW);
+  json.concat(meter.vuLLW);// Voltage Unbalance L-L Worst
 
   json.concat(",\"vuAN\":");
   json.concat(meter.vuAN);
@@ -941,24 +893,29 @@ void t2CallsendViaNBIOT_Notification ()
   json.concat(",\"vuCN\":");
   json.concat(meter.vuCN);
   json.concat(",\"vuLNW\":");
-  json.concat(meter.vuLNW);
+  json.concat(meter.vuLNW);// // Voltage Unbalance L-N Worst
 
 
+  json.concat(",\"F\":");
+  json.concat(meter.freq);
+  json.concat(",\"Temp1\":");
+  json.concat(meter.Temp1);
+  //  json.concat(",\"TEMP_OIL\":");
+  //  json.concat(meter.Temp2);
+
+  json.concat(",\"ver\":");
+  json.concat(FirmwareVer);
   json.concat(",\"rssi\":");
   json.concat(meta.rssi);
-  json.concat(",\"csq\":");
-  json.concat(meta.csq);
   json.concat("}");
   Serial.println(json);
-  SerialBT.println(json);
+
   //
   UDPSend udp = AISnb.sendUDPmsgStr(serverIP, serverPort, json);
   UDPReceive resp = AISnb.waitResponse();
-  Serial.print("rssi:");
-  Serial.println(meta.rssi);
-  SerialBT.print("rssi:");
-  SerialBT.println(meta.rssi);
+
 }
+
 
 int getResult( unsigned int x_high, unsigned int x_low)
 {
@@ -972,29 +929,34 @@ int getResult( unsigned int x_high, unsigned int x_low)
 
 void loop()
 {
-  runner.execute();
+
   ArduinoOTA.handle();
   ms = millis();
 
-  if (ms % 600000 == 0)
+  if (ms % 60000 == 0) {
+    Serial.println("ReadMeter()");
+    t1CallgetMeter();
+    t2CallsendViaNBIOT();
+  }
+  if (ms % 70000 == 0)
   {
     Serial.println("Attach WiFi for，OTA "); Serial.println(WiFi.RSSI() );
     SerialBT.println("Attach WiFi for OTA"); SerialBT.println(WiFi.RSSI() );
     setupWIFI();
-    HeartBeat();
     setupOTA();
+
   }
 
-  if (ms % 60000 == 0)
+  if (ms % 120000 == 0)
   {
     OTA_git_CALL();
     Serial.println("Waiting for，OTA now"); Serial.println(WiFi.RSSI() );
     SerialBT.println("Waiting for, OTA now"); SerialBT.println(WiFi.RSSI() );
   }
- 
+
   if (ms % 10000 == 0)
   {
-    HeartBeat();
+    //    HeartBeat();
   }
 }
 
